@@ -93,7 +93,7 @@ def format_kmb(num):
 st.title("💹 Financial Research System")
 st.markdown("Deep dive into Fundamentals and Technicals of companies.")
 
-query = st.text_input("Enter Company (e.g., ITC, Infosys , Apple):", "")
+query = st.text_input("Enter Company (e.g., Microsoft, Infosys , Apple):", "")
 
 if query:
     ticker = resolve_ticker(query)
