@@ -91,9 +91,9 @@ def format_kmb(num):
     return f"-{val}" if is_neg else val
 
 st.title("💹 Financial Research System")
-st.markdown("Deep dive into Fundamentals and Technicals of companies.")
+st.markdown("Deep dive into fundamentals and technicals of companies.")
 
-query = st.text_input("Enter Company (e.g., Microsoft, Infosys , Apple):", "")
+query = st.text_input("Enter any company name (e.g., Microsoft, Infosys , Apple):", "")
 
 if query:
     ticker = resolve_ticker(query)
