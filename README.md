@@ -8,7 +8,7 @@ An automated fundamental research pipeline and valuation engine. Built with Pyth
 - **M&A Velocity Tracking:** Dedicated logic to analyze inorganic growth engines and synergy potential.
 - **Institutional Reporting:** One-click generation of professional PDF research dossiers.
 
-#T ech Stack
+# Tech Stack
 - **Languages:** Python (Pandas, NumPy, Plotly)
 - **Data Sourcing:** YFinance API integration
 - **Deployment:** Streamlit Cloud
