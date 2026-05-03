@@ -7,3 +7,5 @@ fpdf
 plotly
 nltk
 xlsxwriter
+beautifulsoup4
+requests
