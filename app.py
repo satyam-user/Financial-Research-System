@@ -154,6 +154,8 @@ if query:
             # Here is your original, correct logic for Banks vs Normal Companies
             if is_bank and (de_ratio_raw == 0 or pd.isna(de_ratio_raw)): 
                 k5.metric("Debt-to-Equity", "N/A (Bank)")
+            elif(de_ratio_raw == 0.00 ):
+                k5.metric("Debt-to-Equity", "Debt Free)")
             else: 
                 k5.metric("Debt-to-Equity", f"{de_ratio_raw/100:.2f}")
 
