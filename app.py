@@ -77,10 +77,25 @@ def resolve_ticker(user_input):
         return user_input.upper()
     except: return user_input.upper()
 
-@st.cache_data(ttl=3600)
-def pull_all_data(ticker):
-    stock = yf.Ticker(ticker)
-    return stock.financials.T, stock.balance_sheet.T, stock.cashflow.T, stock.info
+# 1. Create a custom session to disguise the bot as a real Windows/Chrome user
+@st.cache_resource
+def get_yf_session():
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    })
+    return session
+
+# 2. Use that session when fetching data
+try:
+    session = get_yf_session()
+    stock = yf.Ticker(ticker, session=session)
+    
+    # Now pull the fundamentals
+    fundamentals = stock.info
+    
+except Exception as e:
+    st.error(f"Critical Error Mining Fundamental Data: {e}")
 
 def format_kmb(num):
     if pd.isna(num) or num == 0: return "0"
@@ -92,6 +107,20 @@ def format_kmb(num):
     else: val = f"{num:.2f}"
     return f"-{val}" if is_neg else val
 
+# Wrap your fundamental data logic in this caching decorator
+@st.cache_data(ttl=3600) # ttl=3600 means keep in memory for 1 hour (3600 seconds)
+def fetch_fundamentals(ticker_symbol):
+    session = get_yf_session()
+    stock = yf.Ticker(ticker_symbol, session=session)
+    return stock.info
+
+# Then call it in your app like this:
+with st.spinner("Mining Fundamentals..."):
+    try:
+        fundamentals = fetch_fundamentals(ticker)
+        # ... proceed to display your fundamental metrics ...
+    except Exception as e:
+         st.error(f"Critical Error Mining Fundamental Data: {e}")
 st.title("💹 Financial Research System")
 st.markdown("Deep dive into fundamentals and technicals of companies.")
 
