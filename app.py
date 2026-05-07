@@ -7,6 +7,9 @@ import io
 from fpdf import FPDF
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import pandas_ta as ta
+from lightweight_charts_v5 import lightweight_charts_v5_component 
+from streamlit_lightweight_charts import renderLightweightCharts
 
 # --- THE GRAND UNIFICATION IMPORTS ---
 try:
@@ -40,6 +43,7 @@ st.markdown("""
     h2 { color: #60a5fa; margin-top: 40px; text-transform: uppercase; font-size: 1.3rem; border-bottom: 1px solid #1e293b; padding-bottom: 10px;}
 </style>
 """, unsafe_allow_html=True)
+
 def clean_for_pdf(text):
     """
     Cleans HTML tags and special characters so the PDF report 
@@ -97,6 +101,10 @@ query = st.text_input("Enter any company name (e.g., Microsoft, Infosys , Apple)
 
 if query:
     ticker = resolve_ticker(query)
+    
+    # ==========================================
+    # PART 1: FUNDAMENTAL ANALYSIS SECTION
+    # ==========================================
     with st.spinner(f"Compiling institutional ledgers and running analysis for {ticker}..."):
         try:
             inc, bs, cf, info = pull_all_data(ticker)
@@ -119,19 +127,10 @@ if query:
 
             beta_val = info.get('beta', 1.0)
             de_ratio_raw = info.get('debtToEquity', 0)
+            de_val = 0.0 if pd.isna(de_ratio_raw) else float(de_ratio_raw)
             
             st.divider()
-            # --- SAFE MARGIN CALCULATION FOR TOP BAR ---
-            try:
-                # We quietly calculate the margin just for the top bar
-                temp_stock = yf.Ticker(ticker)
-                top_ni = temp_stock.financials.loc['Net Income'].iloc[0]
-                top_rev = temp_stock.financials.loc['Total Revenue'].iloc[0]
-                top_margin = (top_ni / top_rev) * 100 if top_rev != 0 else 0
-            except:
-                top_margin = info.get('profitMargins', 0) * 100
-
-            # --- METRIC DISPLAY ---
+            
             # --- SAFE MARGIN CALCULATION FOR TOP BAR ---
             try:
                 temp_stock = yf.Ticker(ticker)
@@ -147,22 +146,19 @@ if query:
             k1.metric("Market Price", f"{sym}{price:,.2f}")
             k2.metric("Intrinsic Target", f"{sym}{intrinsic_val:,.2f}")
             k3.metric("P/E Ratio", f"{info.get('trailingPE', 'N/A')}")
-
-            # Here is the fixed Profit Margin logic
             k4.metric("Profit Margin", f"{top_margin:.1f}%")
 
-            # Here is your original, correct logic for Banks vs Normal Companies
-            if is_bank and (de_ratio_raw == 0 or pd.isna(de_ratio_raw)): 
+            if is_bank: 
                 k5.metric("Debt-to-Equity", "N/A (Bank)")
-            elif(de_ratio_raw == 0.00 ):
-                k5.metric("Debt-to-Equity", "Debt Free)")
+            elif de_val <= 0.01: 
+                k5.metric("Debt-to-Equity", "Debt Free")
             else: 
-                k5.metric("Debt-to-Equity", f"{de_ratio_raw/100:.2f}")
+                k5.metric("Debt-to-Equity", f"{de_val:.2f}")
 
-            # Here is your original Beta logic
             k6.metric("Beta (Risk)", f"{beta_val:.2f}")
 
             st.divider()
+            
             # --- THE AI & NLP DASHBOARD SECTION ---
             st.header("Advanced AI & NLP updates")
             nlp_text, consensus_text = "NLP Offline", "Consensus Offline"
@@ -330,30 +326,19 @@ if query:
                 opex = gp.iloc[-1] - op_inc.iloc[-1]
                 taxes_other = op_inc.iloc[-1] - ni.iloc[-1]
                 
-                # Values for the chart
                 raw_values = [max(0, cogs), max(0, opex), max(0, taxes_other), max(0, ni.iloc[-1])]
                 labels = ['Cost of Goods', 'Operating Expenses', 'Taxes/Other', 'Net Profit Retained']
-                
-                # Format the labels for the pie chart text (K/M/B)
                 formatted_text = [format_kmb(v) for v in raw_values]
 
                 fig11 = go.Figure(go.Pie(
-                    labels=labels,
-                    values=raw_values,
-                    hole=0.4,
+                    labels=labels, values=raw_values, hole=0.4,
                     marker_colors=['#f59e0b', '#8b5cf6', '#ef4444', '#10b981'],
-                    textinfo='percent', # Show percentage inside the slice
-                    hovertext=formatted_text, # Use our K/M/B function for the popup
-                    hoverinfo='label+text+percent' 
+                    textinfo='percent', hovertext=formatted_text, hoverinfo='label+text+percent' 
                 ))
-                
                 fig11.update_layout(
-                    template="plotly_dark", 
-                    height=350, 
-                    margin=dict(b=0, t=30),
+                    template="plotly_dark", height=350, margin=dict(b=0, t=30),
                     legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5)
                 )
-                
                 st.plotly_chart(fig11, use_container_width=True)
                 st.markdown(f"<div class='conclusion-box'><b>Concept:</b> Breaks down exactly where every dollar of {years[-1]} revenue went.<br><br><b>Trend:</b> The green slice represents the final {(ni.iloc[-1]/rev.iloc[-1])*100:.1f}% kept as profit.<br><br><b>Conclusion:</b> This visualizes the company's cost burden. A larger green slice relative to orange and purple indicates a highly efficient business model.</div>", unsafe_allow_html=True)
             with c12:
@@ -365,16 +350,13 @@ if query:
                 st.plotly_chart(fig12, use_container_width=True)
                 st.markdown(f"<div class='conclusion-box'><b>Agenda:</b> Compares everything the company owns (Assets) against everything it owes (Liabilities).<br><br><b>Trend:</b> Total Assets reached {fin_sym}{assets.iloc[-1]/1e9:.2f}B.<br><br><b>Conclusion:</b> As long as the Blue bars grow faster than the Red bars, the company is building intrinsic equity value and increasing its net worth.</div>", unsafe_allow_html=True)
 
-            # --- NEW SECTION: TRADITIONAL M&A PERFORMANCE ---
             st.markdown("<div class='custom-line'></div>", unsafe_allow_html=True)
             st.header("13. Traditional M&A & Capital Velocity")
 
-            # Calculate M&A Intensity (Acquisitions / Total Cash Outflow)
-            # We pull 'Net Business Purchase' from the cashflow statement if available
             acquisitions = cf.get('Net Business Purchase And Sale', pd.Series([0]*len(cf))).iloc[:slice_idx][::-1].fillna(0).abs()
             total_investment = cf.get('Investing Cash Flow', rev * -0.1).iloc[:slice_idx][::-1].fillna(0).abs()
 
-            m1, m2 = st.columns([1, 2]) # Left side text, Right side chart
+            m1, m2 = st.columns([1, 2])
 
             with m1:
                 st.markdown("### M&A Strategic Summary")
@@ -399,73 +381,47 @@ if query:
                 fig13.add_trace(go.Bar(x=years, y=acquisitions/1e9, name="M&A Spend", marker_color='#f59e0b'))
                 
                 fig13.update_layout(
-                    template="plotly_dark", 
-                    height=400, 
-                    margin=dict(b=0),
+                    template="plotly_dark", height=400, margin=dict(b=0),
                     yaxis_title=f"Amount in {sym} Billions",
                     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
                 )
                 st.plotly_chart(fig13, use_container_width=True)
 
             st.markdown(f"<div class='conclusion-box'><b>Concept:</b> Compares total capital invested (Purple) against specific M&A acquisitions (Orange).<br><br><b>Trend:</b> M&A activity reached {sym}{acquisitions.iloc[-1]/1e9:.2f}B this period.<br><br><b>Conclusion:</b> Monitoring the gap between these two figures reveals if the company is growing through synergy (buying others) or execution (building internally).</div>", unsafe_allow_html=True)
+            
             # --- MASSIVE AUTOMATED PDF REPORT & EXCEL EXPORT ---
             st.divider()
             st.header("IN DEAPTH ANALYTICS")
             st.write("Download the comprehensive multi-page narrative report or the raw Excel financial model.")
             c_exp1, c_exp2 = st.columns(2)
         
-            
-            # --- AI INJECTED INTO PDF ---
             def generate_deep_pdf():
-                # --- STEP 1: DEFINE MISSING VARIABLES & SMART LOGIC ---
                 sentiment_tag = "NEUTRAL" 
-                if "BULLISH" in nlp_text: 
-                    sentiment_tag = "BULLISH"
-                elif "BEARISH" in nlp_text: 
-                    sentiment_tag = "BEARISH"
+                if "BULLISH" in nlp_text: sentiment_tag = "BULLISH"
+                elif "BEARISH" in nlp_text: sentiment_tag = "BEARISH"
 
                 roe_val = info.get('returnOnEquity', 0) * 100
-                # --- SAFE EQUITY LOGIC ---
                 try:
-                    # Try to get the equity, if it's missing or NA, default to 0
                     raw_equity = bs['Stockholders Equity'].iloc[-1]
                     safe_equity = 0 if pd.isna(raw_equity) else (raw_equity / 1e9)
                 except:
                     safe_equity = 0
 
-                # Change your equity definition to this:
                 equity_val = bs.get('Stockholders Equity', pd.Series([0])).iloc[-1]
-                if pd.isna(equity_val):
-                    equity_val = 0
+                if pd.isna(equity_val): equity_val = 0
                 
-                # Check if the company is actually making money (Positive Net Income)
                 is_positive = ni.iloc[-1] > 0
                 fcf_is_positive = fcf.iloc[-1] > 0
 
-                # SIMPLE WORDING SWAPS BASED ON PERFORMANCE
                 health_status = "robust operational integrity" if is_positive else "significant operational challenges"
-                sustainability_msg = (
-                    "The gap between cash made and what is needed shows great long-term health." 
-                    if is_positive else 
-                    "The gap between cash coming in and rising bills shows serious risks for the business."
-                )
-                management_msg = (
-                    "management is putting cash into projects that grow the business." 
-                    if is_positive else 
-                    "management is struggling to keep the business profitable against high costs."
-                )
-                final_action = (
-                    "buy other companies or reward shareholders with extra dividends."
-                    if is_positive else
-                    "focus on cutting debt and saving cash to keep the business running."
-                )
+                sustainability_msg = "The gap between cash made and what is needed shows great long-term health." if is_positive else "The gap between cash coming in and rising bills shows serious risks for the business."
+                management_msg = "management is putting cash into projects that grow the business." if is_positive else "management is struggling to keep the business profitable against high costs."
+                final_action = "buy other companies or reward shareholders with extra dividends." if is_positive else "focus on cutting debt and saving cash to keep the business running."
 
                 pdf = FPDF()
                 pdf.add_page()
                 pdf.set_font("Arial", 'B', 16)
-                # multi_cell automatically wraps long text to the next line so it never cuts off
                 pdf.multi_cell(0, 10, f"FINANCIAL RESEARCH BREAKDOWN: {name.upper()}", align='C')
-
                 
                 pdf.set_font("Arial", 'I', 10)
                 pdf.cell(0, 10, f"Market Price: {pdf_sym}{price:,.2f} | Consensus Target: {pdf_sym}{intrinsic_val:,.2f} | Base Currency: {currency_code}", ln=True, align='C')
@@ -473,77 +429,23 @@ if query:
                 pdf.line(10, 32, 200, 32)
                 pdf.ln(12)
                 
-                if isinstance(nlp_text, tuple):
-                    safe_nlp = clean_for_pdf(nlp_text[0])
-                else:
-                    safe_nlp = clean_for_pdf(nlp_text)
+                if isinstance(nlp_text, tuple): safe_nlp = clean_for_pdf(nlp_text[0])
+                else: safe_nlp = clean_for_pdf(nlp_text)
                 safe_consensus = clean_for_pdf(consensus_text)
                 
-                # 2. DESCRIPTIVE BLOCKS (Simple Language)
-                sentiment_interpretation = (
-                    "What does the sentiment mean? "
-                    f"The NLP engine found a {sentiment_tag} mood in the news. This means the latest stories "
-                    "are highlighting growth chances or risks that aren't fully shown in the stock price yet. "
-                    "This helps investors see if the stock has a safety net or if it might keep falling."
-                )
-
-                financial_interpretation = (
-                    "What does the financial health mean? "
-                    f"With a ROE of {roe_val:.2f}%, {management_msg} "
-                    "For anyone reading this, it shows whether the company is actually building value "
-                    "or just using up its resources to stay afloat."
-                )
+                sentiment_interpretation = f"What does the sentiment mean? The NLP engine found a {sentiment_tag} mood in the news. This means the latest stories are highlighting growth chances or risks that aren't fully shown in the stock price yet. This helps investors see if the stock has a safety net or if it might keep falling."
+                financial_interpretation = f"What does the financial health mean? With a ROE of {roe_val:.2f}%, {management_msg} For anyone reading this, it shows whether the company is actually building value or just using up its resources to stay afloat."
                 
                 sections = {
-                    "1. Executive Summary & Intrinsic Valuation": (
-                        f"This document provides a comprehensive financial breakdown of {name}. The asset is currently trading "
-                        f"at a market price of {pdf_sym}{price:,.2f}. Based on alternative data and Wall Street consensus, the intrinsic target "
-                        f"price is modeled at {pdf_sym}{intrinsic_val:,.2f}. Our analysis strips away standard accounting noise to focus on operational "
-                        f"cash flow, capital structure, and true margin efficiency to determine the long-term viability of the underlying business model."
-                    ),
-                    
+                    "1. Executive Summary & Intrinsic Valuation": f"This document provides a comprehensive financial breakdown of {name}. The asset is currently trading at a market price of {pdf_sym}{price:,.2f}. Based on alternative data and Wall Street consensus, the intrinsic target price is modeled at {pdf_sym}{intrinsic_val:,.2f}. Our analysis strips away standard accounting noise to focus on operational cash flow, capital structure, and true margin efficiency to determine the long-term viability of the underlying business model.",
                     "2. AI Sentiment & NLP Insights": f"{safe_nlp}",
-                    
                     "3. Consensus Forensic Breakdown": f"{safe_consensus}",
-                    
-                    "4. Top-Line Trajectory & Margin Efficiency": (
-                        f"Growth metrics over the observed {slice_idx}-year period reveal that total revenue successfully scaled to {pdf_sym}{rev.iloc[-1]/1e9:.2f} "
-                        f"Billion. This top-line growth is supported by a gross margin of {(gp.iloc[-1]/rev.iloc[-1])*100:.1f}%. By managing their "
-                        f"office and daily costs, the firm secured an operating margin of {(op_inc.iloc[-1]/rev.iloc[-1])*100:.1f}%. "
-                        f"After all taxes, the final profit margin left for shareholders is {(ni.iloc[-1]/rev.iloc[-1])*100:.1f}%."
-                    ),
-                    
-                    "5. Earnings Quality Forensics": (
-                        f"Real cash (Operating Cash Flow) is harder to fake than paper profits. This analysis shows {name} produced {pdf_sym}{ocf.iloc[-1]/1e9:.2f} Billion "
-                        f"in actual cash. Since this cash amount is {'higher' if ocf.iloc[-1]>ni.iloc[-1] else 'lower'} than the reported profit of {pdf_sym}{ni.iloc[-1]/1e9:.2f} "
-                        "Billion, we can see how honest and strong their accounting really is."
-                    ),
-                    
-                    "6. Capital Reinvestment (CapEx) & Free Cash Flow": (
-                        f"To keep the business running and growing, the company spent {pdf_sym}{capex.iloc[-1]/1e9:.2f} Billion on equipment and upgrades. "
-                        f"After paying for these, the leftover 'Free Cash Flow' is {pdf_sym}{fcf.iloc[-1]/1e9:.2f} Billion. This {'helps' if fcf_is_positive else 'hurts'} "
-                        "the company's ability to stay independent and grow without needing to borrow more money."
-                    ),
-                    
-                    "7. Capital Structure, Liquidity & Default Risk": (
-                        f"The balance sheet shows the company has {pdf_sym}{safe_equity:.2f} Billion in value for owners against "
-                        f"debts of {pdf_sym}{info.get('totalDebt', 0)/1e9:.2f} Billion. This tells us if the company has enough "
-                        "money in the bank to pay its bills over the next year without running into trouble."
-                    ),
-                    
-                    "8. M&A Strategic Velocity & Portfolio Impact": (
-                        f"The company spends about {pdf_sym}{acquisitions.mean()/1e9:.2f}B a year buying other businesses. "
-                        f"This M&A spending makes up {(acquisitions.sum()/total_investment.sum())*100:.1f}% of their total investment. "
-                        "This shows if they are growing by being better at their job or just by buying out competitors."
-                    ),
-                    
-                    "9. Final Strategic Verdict": (
-                        f"The multi-year data confirms that {name} shows {health_status}. "
-                        f"{sustainability_msg} \n\n"
-                        f"{sentiment_interpretation} \n\n"
-                        f"{financial_interpretation} \n\n"
-                        f"In light of these metrics, management should {final_action} as a priority to secure the company's long-term future."
-                    )
+                    "4. Top-Line Trajectory & Margin Efficiency": f"Growth metrics over the observed {slice_idx}-year period reveal that total revenue successfully scaled to {pdf_sym}{rev.iloc[-1]/1e9:.2f} Billion. This top-line growth is supported by a gross margin of {(gp.iloc[-1]/rev.iloc[-1])*100:.1f}%. By managing their office and daily costs, the firm secured an operating margin of {(op_inc.iloc[-1]/rev.iloc[-1])*100:.1f}%. After all taxes, the final profit margin left for shareholders is {(ni.iloc[-1]/rev.iloc[-1])*100:.1f}%.",
+                    "5. Earnings Quality Forensics": f"Real cash (Operating Cash Flow) is harder to fake than paper profits. This analysis shows {name} produced {pdf_sym}{ocf.iloc[-1]/1e9:.2f} Billion in actual cash. Since this cash amount is {'higher' if ocf.iloc[-1]>ni.iloc[-1] else 'lower'} than the reported profit of {pdf_sym}{ni.iloc[-1]/1e9:.2f} Billion, we can see how honest and strong their accounting really is.",
+                    "6. Capital Reinvestment (CapEx) & Free Cash Flow": f"To keep the business running and growing, the company spent {pdf_sym}{capex.iloc[-1]/1e9:.2f} Billion on equipment and upgrades. After paying for these, the leftover 'Free Cash Flow' is {pdf_sym}{fcf.iloc[-1]/1e9:.2f} Billion. This {'helps' if fcf_is_positive else 'hurts'} the company's ability to stay independent and grow without needing to borrow more money.",
+                    "7. Capital Structure, Liquidity & Default Risk": f"The balance sheet shows the company has {pdf_sym}{safe_equity:.2f} Billion in value for owners against debts of {pdf_sym}{info.get('totalDebt', 0)/1e9:.2f} Billion. This tells us if the company has enough money in the bank to pay its bills over the next year without running into trouble.",
+                    "8. M&A Strategic Velocity & Portfolio Impact": f"The company spends about {pdf_sym}{acquisitions.mean()/1e9:.2f}B a year buying other businesses. This M&A spending makes up {(acquisitions.sum()/total_investment.sum())*100:.1f}% of their total investment. This shows if they are growing by being better at their job or just by buying out competitors.",
+                    "9. Final Strategic Verdict": f"The multi-year data confirms that {name} shows {health_status}. {sustainability_msg} \n\n{sentiment_interpretation} \n\n{financial_interpretation} \n\nIn light of these metrics, management should {final_action} as a priority to secure the company's long-term future."
                 }
                 
                 for title, text in sections.items():
@@ -584,7 +486,6 @@ if query:
                     
                     workbook = writer.book
                     worksheet = writer.sheets['Financial Model']
-                    
                     max_row = len(years) + 1
 
                     chart1 = workbook.add_chart({'type': 'column'})
@@ -632,4 +533,179 @@ if query:
                 st.download_button("📊 Download financial data and model", generate_excel(), file_name=f"{ticker}_Model.xlsx")
 
         except Exception as e:
-            st.error(f"Critical Error Mining Data: {e}")
+            st.error(f"Critical Error Mining Fundamental Data: {e}")
+# ==========================================
+        # PART 2: THE CUSTOM PRO TERMINAL (TIMEZONE & VOLUME FIXED)
+        # ==========================================
+        st.markdown("---") 
+        st.markdown("### 📈 Market Eye")
+        st.write("Decoding global liquidity through time synced volume.")
+
+        # 1. Trading Intervals
+        interval_options = {
+            "1 Minute (Scalping)": ("1m", "5d"),
+            "5 Minutes": ("5m", "1mo"),
+            "15 Minutes": ("15m", "1mo"),
+            "30 Minutes": ("30m", "1mo"),
+            "1 Hour": ("1h", "1mo")
+        }
+
+        selected_interval = st.selectbox("Select Trading Interval:", list(interval_options.keys()), index=1)
+        yf_interval, yf_period = interval_options[selected_interval]
+
+        with st.spinner(f"Rendering pro-grade terminal for {ticker}..."):
+            try:
+                # 2. Fetch Free Intraday Data
+                df_tech = yf.download(ticker, period=yf_period, interval=yf_interval, progress=False)
+
+                if isinstance(df_tech.columns, pd.MultiIndex):
+                    df_tech.columns = df_tech.columns.get_level_values(0)
+
+                if not df_tech.empty and len(df_tech) > 50:
+                    
+                    # ==========================================
+                    # THE TIMEZONE FIX (IST vs EST)
+                    # ==========================================
+                    # Make sure the data has a timezone, then convert it based on the exchange
+                    if df_tech.index.tz is None:
+                        df_tech.index = df_tech.index.tz_localize('UTC')
+                        
+                    if ticker.endswith('.NS') or ticker.endswith('.BO'):
+                        df_tech.index = df_tech.index.tz_convert('Asia/Kolkata')
+                    else:
+                        df_tech.index = df_tech.index.tz_convert('America/New_York')
+
+                    # 3. Calculate ALL Indicators mathematically first
+                    df_tech.ta.sma(length=20, append=True) 
+                    df_tech.ta.ema(length=50, append=True) 
+                    df_tech.ta.bbands(length=20, std=2, append=True)
+                    df_tech.ta.rsi(length=14, append=True)
+                    df_tech.ta.macd(fast=12, slow=26, signal=9, append=True)
+                    
+                    if 'Volume' in df_tech.columns and not df_tech['Volume'].eq(0).all():
+                        df_tech.ta.vwap(append=True)
+                        has_vwap = True
+                    else:
+                        has_vwap = False
+
+                    df_tech.dropna(inplace=True)
+
+                    # Create color array for Volume bars (Green for up, Red for down)
+                    colors = ['#10b981' if row['Close'] >= row['Open'] else '#ef4444' for index, row in df_tech.iterrows()]
+
+                    # 4. Build the Plotly Multi-Pane Chart (NOW 4 ROWS FOR VOLUME)
+                    fig_tech = make_subplots(rows=4, cols=1, shared_xaxes=True, 
+                                        vertical_spacing=0.02, 
+                                        row_heights=[0.5, 0.15, 0.15, 0.2], # Optimized heights
+                                        subplot_titles=("Price Action & Overlays", "Volume", "MACD Momentum", "RSI (14)"))
+
+                    # --- ROW 1: Price & Overlays ---
+                    fig_tech.add_trace(go.Candlestick(x=df_tech.index, open=df_tech['Open'], high=df_tech['High'], low=df_tech['Low'], close=df_tech['Close'], name="Price"), row=1, col=1)
+                    
+                    sma_col = df_tech.columns[df_tech.columns.str.contains('SMA_')][0]
+                    ema_col = df_tech.columns[df_tech.columns.str.contains('EMA_')][0]
+                    fig_tech.add_trace(go.Scatter(x=df_tech.index, y=df_tech[sma_col], line=dict(color='#facc15', width=1.5), name="20 SMA"), row=1, col=1)
+                    fig_tech.add_trace(go.Scatter(x=df_tech.index, y=df_tech[ema_col], line=dict(color='#3b82f6', width=1.5), name="50 EMA"), row=1, col=1)
+                    
+                    if has_vwap:
+                        vwap_col = df_tech.columns[df_tech.columns.str.startswith('VWAP')][0]
+                        fig_tech.add_trace(go.Scatter(x=df_tech.index, y=df_tech[vwap_col], line=dict(color='#ec4899', width=2, dash='dot'), name="VWAP"), row=1, col=1)
+
+                    bb_upper = df_tech.columns[df_tech.columns.str.contains('BBU_')][0]
+                    bb_lower = df_tech.columns[df_tech.columns.str.contains('BBL_')][0]
+                    fig_tech.add_trace(go.Scatter(x=df_tech.index, y=df_tech[bb_upper], line=dict(color='gray', width=1, dash='dot'), name="BB Upper"), row=1, col=1)
+                    fig_tech.add_trace(go.Scatter(x=df_tech.index, y=df_tech[bb_lower], line=dict(color='gray', width=1, dash='dot'), name="BB Lower", fill='tonexty', fillcolor='rgba(128,128,128,0.05)'), row=1, col=1)
+
+                    # --- ROW 2: VOLUME (NEW) ---
+                    fig_tech.add_trace(go.Bar(x=df_tech.index, y=df_tech['Volume'], marker_color=colors, name="Volume"), row=2, col=1)
+
+                    # --- ROW 3: MACD ---
+                    macd_line = df_tech.columns[df_tech.columns.str.startswith('MACD_')][0]
+                    macd_signal = df_tech.columns[df_tech.columns.str.startswith('MACDs_')][0]
+                    macd_hist = df_tech.columns[df_tech.columns.str.startswith('MACDh_')][0]
+                    
+                    fig_tech.add_trace(go.Bar(x=df_tech.index, y=df_tech[macd_hist], marker_color=np.where(df_tech[macd_hist]>=0, '#10b981', '#ef4444'), name="Histogram"), row=3, col=1)
+                    fig_tech.add_trace(go.Scatter(x=df_tech.index, y=df_tech[macd_line], line=dict(color='#3b82f6', width=1.5), name="MACD"), row=3, col=1)
+                    fig_tech.add_trace(go.Scatter(x=df_tech.index, y=df_tech[macd_signal], line=dict(color='#f97316', width=1.5), name="Signal"), row=3, col=1)
+
+                    # --- ROW 4: RSI ---
+                    rsi_col = df_tech.columns[df_tech.columns.str.contains('RSI_')][0]
+                    fig_tech.add_trace(go.Scatter(x=df_tech.index, y=df_tech[rsi_col], line=dict(color='#c084fc', width=1.5), name="RSI"), row=4, col=1)
+                    fig_tech.add_hline(y=70, line_dash="dash", line_color="red", row=4, col=1)
+                    fig_tech.add_hline(y=30, line_dash="dash", line_color="green", row=4, col=1)
+
+                    # ==========================================
+                    # 5. THE PERFECT ZOOM & SQUISH FIX (FOR ALL ROWS)
+                    # ==========================================
+                    if yf_interval == "1m": zoom_candles = 60
+                    elif yf_interval == "5m": zoom_candles = 50
+                    elif yf_interval == "15m": zoom_candles = 40
+                    elif yf_interval == "30m": zoom_candles = 30
+                    else: zoom_candles = 90
+                    zoom_candles = min(zoom_candles, len(df_tech))
+
+                    x_start, x_end = df_tech.index[-zoom_candles], df_tech.index[-1]
+                    visible_data = df_tech.iloc[-zoom_candles:]
+
+                    # Calculate precise Y-axis bounds for EVERY subplot based only on visible data
+                    y_min, y_max = visible_data['Low'].min(), visible_data['High'].max()
+                    y_pad = (y_max - y_min) * 0.05 
+                    
+                    vol_max = visible_data['Volume'].max() * 1.1 # 10% padding above volume
+                    
+                    macd_min = visible_data[[macd_line, macd_signal, macd_hist]].min().min()
+                    macd_max = visible_data[[macd_line, macd_signal, macd_hist]].max().max()
+                    macd_pad = abs(macd_max - macd_min) * 0.1
+
+                    # Force the camera zoom on X-axis
+                    fig_tech.update_xaxes(range=[x_start, x_end])
+                    
+                    # Force the Auto-Scale on ALL Y-axes
+                    fig_tech.update_yaxes(range=[y_min - y_pad, y_max + y_pad], row=1, col=1) # Price
+                    fig_tech.update_yaxes(range=[0, vol_max], row=2, col=1)                   # Volume
+                    fig_tech.update_yaxes(range=[macd_min - macd_pad, macd_max + macd_pad], row=3, col=1) # MACD
+
+                    # Hide weekend gaps
+                    fig_tech.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
+
+                    fig_tech.update_layout(
+                        height=900, 
+                        template="plotly_dark",
+                        showlegend=True,
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                        xaxis_rangeslider_visible=False,
+                        margin=dict(l=10, r=10, t=50, b=10)
+                    )
+                    
+                    st.plotly_chart(fig_tech, use_container_width=True)
+
+                    # 6. The AI Confluence Matrix
+                    latest_rsi = df_tech[rsi_col].iloc[-1]
+                    latest_close = df_tech['Close'].iloc[-1]
+                    latest_sma = df_tech[sma_col].iloc[-1]
+                    
+                    st.markdown("### 🤖 Technical Matrix")
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        if latest_rsi > 70: st.error(f"**RSI ({latest_rsi:.1f}):** Overbought (Bearish)")
+                        elif latest_rsi < 30: st.success(f"**RSI ({latest_rsi:.1f}):** Oversold (Bullish)")
+                        else: st.info(f"**RSI ({latest_rsi:.1f}):** Neutral")
+                            
+                    with col2:
+                        if latest_close > latest_sma: st.success(f"**Trend:** Bullish (Above 20 SMA)")
+                        else: st.error(f"**Trend:** Bearish (Below 20 SMA)")
+                            
+                    with col3:
+                        if has_vwap:
+                            latest_vwap = df_tech[vwap_col].iloc[-1]
+                            if latest_close > latest_vwap: st.success(f"**Intraday:** Bullish (Above VWAP)")
+                            else: st.error(f"**Intraday:** Bearish (Below VWAP)")
+                        else:
+                            st.warning("**Note:** Chart is powered by custom yfinance data. AI calculates momentum underneath.")
+
+            except Exception as e:
+                st.error(f"Engine logic error: {e}")
+
+# Put this right above your charting code
+if st.button("🔄 Refresh Live Data"):
+    st.rerun() # This forces Streamlit to re-download the latest yfinance data
