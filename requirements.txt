@@ -9,3 +9,4 @@ nltk
 xlsxwriter
 beautifulsoup4
 requests
+pandas_ta
