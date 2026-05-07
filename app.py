@@ -8,8 +8,6 @@ from fpdf import FPDF
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas_ta as ta
-from lightweight_charts_v5 import lightweight_charts_v5_component 
-from streamlit_lightweight_charts import renderLightweightCharts
 
 # --- THE GRAND UNIFICATION IMPORTS ---
 try:
