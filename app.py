@@ -8,6 +8,8 @@ from fpdf import FPDF
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas_ta as ta
+from lightweight_charts_v5 import lightweight_charts_v5_component 
+from streamlit_lightweight_charts import renderLightweightCharts
 
 # --- THE GRAND UNIFICATION IMPORTS ---
 try:
@@ -77,7 +79,9 @@ def resolve_ticker(user_input):
         return user_input.upper()
     except: return user_input.upper()
 
-# 1. Create a custom session to disguise the bot as a real Windows/Chrome user
+# ==========================================
+# ANTI-BAN CACHING FUNCTIONS (Definitions only)
+# ==========================================
 @st.cache_resource
 def get_yf_session():
     session = requests.Session()
@@ -86,16 +90,16 @@ def get_yf_session():
     })
     return session
 
-# 2. Use that session when fetching data
-try:
+@st.cache_data(ttl=3600) 
+def fetch_fundamentals(ticker_symbol):
     session = get_yf_session()
-    stock = yf.Ticker(ticker, session=session)
-    
-    # Now pull the fundamentals
-    fundamentals = stock.info
-    
-except Exception as e:
-    st.error(f"Critical Error Mining Fundamental Data: {e}")
+    stock = yf.Ticker(ticker_symbol, session=session)
+    return stock.info
+
+@st.cache_data(ttl=3600)
+def pull_all_data(ticker):
+    stock = yf.Ticker(ticker)
+    return stock.financials.T, stock.balance_sheet.T, stock.cashflow.T, stock.info
 
 def format_kmb(num):
     if pd.isna(num) or num == 0: return "0"
@@ -107,20 +111,6 @@ def format_kmb(num):
     else: val = f"{num:.2f}"
     return f"-{val}" if is_neg else val
 
-# Wrap your fundamental data logic in this caching decorator
-@st.cache_data(ttl=3600) # ttl=3600 means keep in memory for 1 hour (3600 seconds)
-def fetch_fundamentals(ticker_symbol):
-    session = get_yf_session()
-    stock = yf.Ticker(ticker_symbol, session=session)
-    return stock.info
-
-# Then call it in your app like this:
-with st.spinner("Mining Fundamentals..."):
-    try:
-        fundamentals = fetch_fundamentals(ticker)
-        # ... proceed to display your fundamental metrics ...
-    except Exception as e:
-         st.error(f"Critical Error Mining Fundamental Data: {e}")
 st.title("💹 Financial Research System")
 st.markdown("Deep dive into fundamentals and technicals of companies.")
 
