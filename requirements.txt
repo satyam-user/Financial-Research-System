@@ -8,5 +8,9 @@ plotly
 nltk
 xlsxwriter
 beautifulsoup4
-requests
+openpyxl
+requests-cache
+requests-ratelimiter
+pyrate-limiter
+plotly
 pandas-ta
