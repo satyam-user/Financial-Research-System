@@ -9,8 +9,6 @@ nltk
 xlsxwriter
 beautifulsoup4
 openpyxl
-requests-cache
-requests-ratelimiter
-pyrate-limiter
 plotly
 pandas-ta
+scikit-learn
