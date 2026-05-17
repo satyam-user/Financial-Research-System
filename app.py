@@ -4,10 +4,17 @@ import pandas as pd
 import numpy as np
 import requests
 import io
+import openpyxl                 
 from fpdf import FPDF
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side 
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas_ta as ta
+import base64
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
+
 
 # --- THE GRAND UNIFICATION IMPORTS ---
 try:
@@ -61,6 +68,35 @@ def clean_for_pdf(text):
     for old, new in replacements.items():
         text = text.replace(old, new)
     return text
+import time
+import random
+from threading import Lock
+
+# 1. Global Traffic Cop: Forces all users into a single-file line
+api_lock = Lock()
+
+def safe_api_call(func, *args, **kwargs):
+    """
+    Wraps all Yahoo Finance calls in a protective shield.
+    Includes mandatory human-like delays and exponential backoff for 429 errors.
+    """
+    max_retries = 3
+    for attempt in range(max_retries):
+        with api_lock: # Forces users to wait their turn
+            try:
+                # Mandatory 1 to 2 second delay so Yahoo doesn't think it's a bot attack
+                time.sleep(random.uniform(1.0, 2.0)) 
+                return func(*args, **kwargs)
+            except Exception as e:
+                error_msg = str(e).lower()
+                # If Yahoo throws a ban, wait and try again
+                if "429" in error_msg or "too many requests" in error_msg or "rate limit" in error_msg:
+                    if attempt < max_retries - 1:
+                        backoff_time = (2 ** attempt) + random.uniform(0.1, 1.0)
+                        time.sleep(backoff_time)
+                        continue
+                # If it's a real error (like a fake ticker), pass it down
+                raise e
 
 def resolve_ticker(user_input):
     user_input = user_input.strip()
@@ -77,21 +113,146 @@ def resolve_ticker(user_input):
         return user_input.upper()
     except: return user_input.upper()
 
+
 # ==========================================
-# ANTI-BAN CACHING FUNCTIONS (Definitions only)
+# PART 1: THE EXCEL GENERATOR FUNCTION
 # ==========================================
-@st.cache_resource
-def get_yf_session():
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    })
-    return session
+def generate_dcf_excel(ticker_symbol, base_revenue, shares_out, total_cash, total_debt, actual_margin, actual_growth, stock_currency, financial_currency, live_fx_rate):
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Proprietary DCF Model"
+
+    header_fill = PatternFill(start_color="1B2631", end_color="1B2631", fill_type="solid")
+    subheader_fill = PatternFill(start_color="EAEDED", end_color="EAEDED", fill_type="solid")
+    input_fill = PatternFill(start_color="FEF9E7", end_color="FEF9E7", fill_type="solid")
+    white_font = Font(color="FFFFFF", bold=True)
+    blue_font = Font(color="0000FF")
+    bold_font = Font(bold=True)
+    top_bottom_border = Border(top=Side(style='thin'), bottom=Side(style='double'))
+
+    ws.column_dimensions['A'].width = 38
+    for i in range(2, 9): ws.column_dimensions[get_column_letter(i)].width = 16
+
+    ws['A1'] = f"DISCOUNTED CASH FLOW (DCF) MODEL - {ticker_symbol.upper()}"
+    ws['A1'].font = Font(bold=True, size=14)
+    ws['A2'] = "Format: Institutional Standard (Unlevered FCF)"
+
+    headers = ["(Figures in Millions)", "Year 0 (Current)", "Year 1", "Year 2", "Year 3", "Year 4", "Year 5"]
+    for col_num, header in enumerate(headers, 1):
+        cell = ws.cell(row=4, column=col_num, value=header)
+        cell.fill = header_fill; cell.font = white_font
+
+    ws['A5'] = "1. UNLEVERED FREE CASH FLOW BUILD"
+    ws['A5'].fill = subheader_fill; ws['A5'].font = bold_font
+
+    ws['A6'] = "Total Revenue"
+    ws['B6'] = base_revenue
+    ws['A7'] = "  % YoY Growth"
+
+    for c in range(3, 8):
+        col = get_column_letter(c); prev_col = get_column_letter(c-1)
+        ws[f'{col}7'] = actual_growth
+        ws[f'{col}7'].font = blue_font; ws[f'{col}7'].fill = input_fill; ws[f'{col}7'].number_format = '0.0%'
+        ws[f'{col}6'] = f"={prev_col}6*(1+{col}7)"; ws[f'{col}6'].number_format = '#,##0'
+
+    ws['A8'] = "EBIT (Operating Income)"
+    ws['A9'] = "  % EBIT Margin"
+    ws['A10'] = "Less: Taxes (25%)"
+    ws['A11'] = "EBIAT (Net Operating Profit After Tax)"
+
+    for c in range(2, 8):
+        col = get_column_letter(c)
+        ws[f'{col}9'] = actual_margin
+        ws[f'{col}9'].font = blue_font; ws[f'{col}9'].fill = input_fill; ws[f'{col}9'].number_format = '0.0%'
+        ws[f'{col}8'] = f"={col}6*{col}9"
+        ws[f'{col}10'] = f"=-{col}8*0.25"
+        ws[f'{col}11'] = f"={col}8+{col}10"; ws[f'{col}11'].font = bold_font
+
+    ws['A12'] = "Plus: Depreciation & Amortization"
+    ws['A13'] = "Less: Capital Expenditure"
+    ws['A14'] = "Less: Change in Net Working Capital"
+    ws['A15'] = "UNLEVERED FREE CASH FLOW"
+
+    for c in range(2, 8):
+        col = get_column_letter(c)
+        ws[f'{col}12'] = f"={col}6*0.04"
+        ws[f'{col}13'] = f"=-{col}6*0.05"
+        ws[f'{col}14'] = f"=-{col}6*0.01"
+        ws[f'{col}15'] = f"=SUM({col}11:{col}14)"; ws[f'{col}15'].font = bold_font; ws[f'{col}15'].border = top_bottom_border
+
+    ws['A17'] = "2. DISCOUNTING & TERMINAL VALUE"
+    ws['A17'].fill = subheader_fill; ws['A17'].font = bold_font
+
+    ws['A18'] = "Weighted Average Cost of Capital (WACC)"
+    ws['B18'] = 0.10
+    ws['B18'].font = blue_font; ws['B18'].fill = input_fill; ws['B18'].number_format = '0.0%'
+
+    ws['A19'] = "Terminal Growth Rate"
+    ws['B19'] = 0.03
+    ws['B19'].font = blue_font; ws['B19'].fill = input_fill; ws['B19'].number_format = '0.0%'
+
+    ws['A20'] = "Discount Factor"
+    ws['A21'] = "Present Value of FCF"
+    for c in range(3, 8):
+        col = get_column_letter(c); year = c - 2
+        ws[f'{col}20'] = f"=1/((1+$B$18)^{year})"; ws[f'{col}20'].number_format = '0.00x'
+        ws[f'{col}21'] = f"={col}15*{col}20"
+
+    ws['A23'] = "3. ENTERPRISE TO EQUITY VALUATION"
+    ws['A23'].fill = subheader_fill; ws['A23'].font = bold_font
+    ws['A24'] = "Cumulative PV of FCFs"
+    ws['B24'] = "=SUM(C21:G21)"
+    ws['A25'] = "Terminal Value"
+    ws['B25'] = "=G15*(1+B19)/(B18-B19)"
+    ws['A26'] = "PV of Terminal Value"
+    ws['B26'] = "=B25*G20"
+    ws['A27'] = "Enterprise Value"
+    ws['B27'] = "=B24+B26"; ws['B27'].font = bold_font
+    ws['A28'] = "Plus: Cash & Equivalents"
+    ws['B28'] = total_cash
+    ws['A29'] = "Less: Total Debt"
+    ws['B29'] = -abs(total_debt)
+    ws['A30'] = "Implied Equity Value"
+    ws['B30'] = "=B27+B28+B29"; ws['B30'].font = bold_font
+    ws['A31'] = "Shares Outstanding"
+    ws['B31'] = shares_out
+
+    ws['A33'] = f"IMPLIED SHARE PRICE ({financial_currency})"
+    ws['B33'] = "=B30/B31"
+    ws['B33'].font = Font(bold=True, size=12); ws['A33'].font = Font(bold=True, size=12)
+    ws['B33'].number_format = '"$"#,##0.00' if financial_currency == "USD" else '"₹"#,##0.00'
+    ws['B33'].border = top_bottom_border
+
+    if stock_currency != financial_currency:
+        ws['A36'] = "4. CROSS-CURRENCY NORMALIZER"
+        ws['A36'].fill = subheader_fill; ws['A36'].font = bold_font
+
+        ws['A37'] = f"Live Exchange Rate ({financial_currency} to {stock_currency})"
+        ws['B37'] = live_fx_rate
+        ws['B37'].font = blue_font 
+        ws['B37'].fill = input_fill
+        ws['B37'].number_format = '0.00'
+
+        ws['A39'] = f"IMPLIED SHARE PRICE ({stock_currency})"
+        ws['B39'] = "=B33*B37"
+        ws['B39'].font = Font(bold=True, color="008000", size=14) 
+        ws['A39'].font = Font(bold=True, size=12)
+        ws['B39'].number_format = '"₹"#,##0.00' if stock_currency == "INR" else '"$"#,##0.00'
+        ws['B39'].border = top_bottom_border
+
+    excel_buffer = io.BytesIO()
+    wb.save(excel_buffer)
+    excel_buffer.seek(0)
+    return excel_buffer
+# ==========================================
+# NATIVE CACHING (YFINANCE CLOUDFLARE COMPATIBLE)
+# ==========================================
+# Relying purely on Streamlit caching. Custom sessions are removed 
+# so yfinance can natively use curl_cffi to bypass Yahoo's firewalls.
 
 @st.cache_data(ttl=3600) 
 def fetch_fundamentals(ticker_symbol):
-    session = get_yf_session()
-    stock = yf.Ticker(ticker_symbol, session=session)
+    stock = yf.Ticker(ticker_symbol)
     return stock.info
 
 @st.cache_data(ttl=3600)
@@ -109,13 +270,75 @@ def format_kmb(num):
     else: val = f"{num:.2f}"
     return f"-{val}" if is_neg else val
 
+# ==========================================
+# USER INTERFACE START
+# ==========================================
 st.title("💹 Financial Research System")
 st.markdown("Deep dive into fundamentals and technicals of companies.")
 
-query = st.text_input("Enter any company name (e.g., Microsoft, Infosys , Apple):", "")
+search_col1, search_col2 = st.columns([8, 1])
+with search_col1:
+    query = st.text_input("Enter any company name (e.g., Microsoft, Infosys, Apple):", label_visibility="collapsed")
+with search_col2:
+    search_clicked = st.button("Search 🔍", use_container_width=True)
+
 
 if query:
     ticker = resolve_ticker(query)
+    def run_automated_dcf(ticker_obj, current_price):
+        try:
+            # 1. Pull Raw Accounting Data
+            info = ticker_obj.info
+            cash_flow = ticker_obj.cashflow
+            financials = ticker_obj.financials
+            balance_sheet = ticker_obj.balancesheet
+            
+            # Extract latest year data (safely handling missing data)
+            shares_out = info.get('sharesOutstanding', 1)
+            total_debt = info.get('totalDebt', 0)
+            total_cash = info.get('totalCash', 0)
+            
+            # Calculate a rough proxy for current year Free Cash Flow
+            operating_cash_flow = cash_flow.loc['Operating Cash Flow'].iloc[0]
+            capex = cash_flow.loc['Capital Expenditure'].iloc[0]
+            current_fcf = operating_cash_flow + capex # CapEx is usually a negative number in accounting
+            
+            # 2. Automated Assumptions (The AVM Engine)
+            projected_growth_rate = 0.08  # Assuming 8% FCF growth for 5 years
+            wacc = 0.10                   # 10% Discount Rate
+            terminal_growth = 0.03        # 3% Perpetuity growth
+            
+            # 3. Project 5 Years of FCF
+            projected_fcfs = []
+            for year in range(1, 6):
+                future_fcf = current_fcf * ((1 + projected_growth_rate) ** year)
+                projected_fcfs.append(future_fcf)
+                
+            # 4. Discount FCFs to Present Value
+            pv_fcfs = 0
+            for year, fcf in enumerate(projected_fcfs, 1):
+                pv_fcfs += fcf / ((1 + wacc) ** year)
+                
+            # 5. Terminal Value
+            terminal_value = (projected_fcfs[-1] * (1 + terminal_growth)) / (wacc - terminal_growth)
+            pv_terminal_value = terminal_value / ((1 + wacc) ** 5)
+            
+            # 6. Enterprise Value to Equity Value
+            enterprise_value = pv_fcfs + pv_terminal_value
+            equity_value = enterprise_value + total_cash - total_debt
+            
+            implied_share_price = equity_value / shares_out
+            
+            # Generate DataFrame for Excel Export
+            dcf_df = pd.DataFrame({
+                "Metric": ["Current FCF", "Year 1 FCF", "Year 2 FCF", "Year 3 FCF", "Year 4 FCF", "Year 5 FCF", "Terminal Value", "Enterprise Value", "Equity Value", "Implied Share Price"],
+                "Value (Automated)": [current_fcf, projected_fcfs[0], projected_fcfs[1], projected_fcfs[2], projected_fcfs[3], projected_fcfs[4], terminal_value, enterprise_value, equity_value, implied_share_price]
+            })
+            
+            return implied_share_price, dcf_df
+            
+        except Exception as e:
+            return None, None
     
     # ==========================================
     # PART 1: FUNDAMENTAL ANALYSIS SECTION
@@ -405,9 +628,6 @@ if query:
             st.markdown(f"<div class='conclusion-box'><b>Concept:</b> Compares total capital invested (Purple) against specific M&A acquisitions (Orange).<br><br><b>Trend:</b> M&A activity reached {sym}{acquisitions.iloc[-1]/1e9:.2f}B this period.<br><br><b>Conclusion:</b> Monitoring the gap between these two figures reveals if the company is growing through synergy (buying others) or execution (building internally).</div>", unsafe_allow_html=True)
             
             # --- MASSIVE AUTOMATED PDF REPORT & EXCEL EXPORT ---
-            st.divider()
-            st.header("IN DEAPTH ANALYTICS")
-            st.write("Download the comprehensive multi-page narrative report or the raw Excel financial model.")
             c_exp1, c_exp2 = st.columns(2)
         
             def generate_deep_pdf():
@@ -541,14 +761,160 @@ if query:
                     df_def.to_excel(writer, sheet_name='Metric Guide', index=False)
                     
                 return output.getvalue()
-
-            with c_exp1:
-                st.download_button("📄 Download in deapth Report (with AI Insights)", generate_deep_pdf(), file_name=f"{ticker}_Research.pdf", mime="application/pdf")
-            with c_exp2:
-                st.download_button("📊 Download financial data and model", generate_excel(), file_name=f"{ticker}_Model.xlsx")
-
+            
+            
         except Exception as e:
             st.error(f"Critical Error Mining Fundamental Data: {e}")
+        
+        # import io
+        # import openpyxl
+        # from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        # from openpyxl.utils import get_column_letter
+
+        # def generate_dcf_excel(ticker_symbol, base_revenue, shares_out, total_cash, total_debt):
+        #     wb = openpyxl.Workbook()
+        #     ws = wb.active
+        #     ws.title = "Proprietary DCF Model"
+
+        #     # --- Setup Styles ---
+        #     header_fill = PatternFill(start_color="1B2631", end_color="1B2631", fill_type="solid")
+        #     subheader_fill = PatternFill(start_color="EAEDED", end_color="EAEDED", fill_type="solid")
+        #     input_fill = PatternFill(start_color="FEF9E7", end_color="FEF9E7", fill_type="solid")
+            
+        #     white_font = Font(color="FFFFFF", bold=True)
+        #     blue_font = Font(color="0000FF") # Hardcoded inputs
+        #     bold_font = Font(bold=True)
+            
+        #     top_bottom_border = Border(top=Side(style='thin'), bottom=Side(style='double'))
+
+        #     ws.column_dimensions['A'].width = 38
+        #     for i in range(2, 9):
+        #         ws.column_dimensions[get_column_letter(i)].width = 16
+
+        #     # --- Headers ---
+        #     ws['A1'] = f"DISCOUNTED CASH FLOW (DCF) MODEL - {ticker_symbol.upper()}"
+        #     ws['A1'].font = Font(bold=True, size=14)
+        #     ws['A2'] = "Format: Institutional Standard (Unlevered FCF)"
+            
+        #     headers = ["(Figures in Millions)", "Year 0 (Current)", "Year 1", "Year 2", "Year 3", "Year 4", "Year 5"]
+        #     for col_num, header in enumerate(headers, 1):
+        #         cell = ws.cell(row=4, column=col_num, value=header)
+        #         cell.fill = header_fill
+        #         cell.font = white_font
+
+        #     # --- 1. UNLEVERED FCF BUILD ---
+        #     ws['A5'] = "1. UNLEVERED FREE CASH FLOW BUILD"
+        #     ws['A5'].fill = subheader_fill; ws['A5'].font = bold_font
+
+        #     # Revenue
+        #     ws['A6'] = "Total Revenue"
+        #     ws['B6'] = base_revenue
+        #     ws['A7'] = "  % YoY Growth"
+            
+        #     for c in range(3, 8):
+        #         col = get_column_letter(c); prev_col = get_column_letter(c-1)
+        #         ws[f'{col}7'] = 0.08  # 8% Growth Input
+        #         ws[f'{col}7'].font = blue_font; ws[f'{col}7'].fill = input_fill; ws[f'{col}7'].number_format = '0.0%'
+        #         ws[f'{col}6'] = f"={prev_col}6*(1+{col}7)"
+        #         ws[f'{col}6'].number_format = '#,##0'
+
+        #     # EBIT & Taxes
+        #     ws['A8'] = "EBIT (Operating Income)"
+        #     ws['A9'] = "  % EBIT Margin"
+        #     ws['A10'] = "Less: Taxes (25%)"
+        #     ws['A11'] = "EBIAT (Net Operating Profit After Tax)"
+            
+        #     for c in range(2, 8):
+        #         col = get_column_letter(c)
+        #         ws[f'{col}9'] = 0.20 # 20% Margin Input
+        #         ws[f'{col}9'].font = blue_font; ws[f'{col}9'].fill = input_fill; ws[f'{col}9'].number_format = '0.0%'
+        #         ws[f'{col}8'] = f"={col}6*{col}9"
+        #         ws[f'{col}10'] = f"=-{col}8*0.25"
+        #         ws[f'{col}11'] = f"={col}8+{col}10"
+        #         ws[f'{col}11'].font = bold_font
+
+        #     # D&A, CapEx, NWC
+        #     ws['A12'] = "Plus: Depreciation & Amortization"
+        #     ws['A13'] = "Less: Capital Expenditure"
+        #     ws['A14'] = "Less: Change in Net Working Capital"
+        #     ws['A15'] = "UNLEVERED FREE CASH FLOW"
+            
+        #     for c in range(2, 8):
+        #         col = get_column_letter(c)
+        #         ws[f'{col}12'] = f"={col}6*0.04" # D&A assumption
+        #         ws[f'{col}13'] = f"=-{col}6*0.05" # CapEx assumption
+        #         ws[f'{col}14'] = f"=-{col}6*0.01" # NWC assumption
+        #         ws[f'{col}15'] = f"=SUM({col}11:{col}14)"
+        #         ws[f'{col}15'].font = bold_font
+        #         ws[f'{col}15'].border = top_bottom_border
+
+        #     # --- 2. WACC & DISCOUNTING ---
+        #     ws['A17'] = "2. DISCOUNTING & TERMINAL VALUE"
+        #     ws['A17'].fill = subheader_fill; ws['A17'].font = bold_font
+            
+        #     ws['A18'] = "Weighted Average Cost of Capital (WACC)"
+        #     ws['B18'] = 0.10
+        #     ws['B18'].font = blue_font; ws['B18'].fill = input_fill; ws['B18'].number_format = '0.0%'
+            
+        #     ws['A19'] = "Terminal Growth Rate"
+        #     ws['B19'] = 0.03
+        #     ws['B19'].font = blue_font; ws['B19'].fill = input_fill; ws['B19'].number_format = '0.0%'
+
+        #     ws['A20'] = "Discount Factor"
+        #     ws['A21'] = "Present Value of FCF"
+        #     for c in range(3, 8):
+        #         col = get_column_letter(c); year = c - 2
+        #         ws[f'{col}20'] = f"=1/((1+$B$18)^{year})"
+        #         ws[f'{col}20'].number_format = '0.00x'
+        #         ws[f'{col}21'] = f"={col}15*{col}20"
+
+        #     # --- 3. VALUATION ---
+        #     ws['A23'] = "3. ENTERPRISE TO EQUITY VALUATION"
+        #     ws['A23'].fill = subheader_fill; ws['A23'].font = bold_font
+
+        #     ws['A24'] = "Cumulative PV of FCFs"
+        #     ws['B24'] = "=SUM(C21:G21)"
+            
+        #     ws['A25'] = "Terminal Value"
+        #     ws['B25'] = "=G15*(1+B19)/(B18-B19)"
+            
+        #     ws['A26'] = "PV of Terminal Value"
+        #     ws['B26'] = "=B25*G20"
+            
+        #     ws['A27'] = "Enterprise Value"
+        #     ws['B27'] = "=B24+B26"
+        #     ws['B27'].font = bold_font
+
+        #     ws['A28'] = "Plus: Cash & Equivalents"
+        #     ws['B28'] = total_cash
+        #     ws['A29'] = "Less: Total Debt"
+        #     ws['B29'] = -abs(total_debt) # Ensures it subtracts properly
+            
+        #     ws['A30'] = "Implied Equity Value"
+        #     ws['B30'] = "=B27+B28+B29"
+        #     ws['B30'].font = bold_font
+
+        #     ws['A31'] = "Shares Outstanding"
+        #     ws['B31'] = shares_out
+            
+        #     ws['A33'] = "IMPLIED SHARE PRICE"
+        #     ws['B33'] = "=B30/B31"
+        #     ws['B33'].font = Font(bold=True, size=12)
+        #     ws['A33'].font = Font(bold=True, size=12)
+        #     ws['B33'].number_format = '"₹"#,##0.00'
+        #     ws['B33'].border = top_bottom_border
+
+        #     # Safely extract financial variables EXCLUSIVELY from the standardized 'info' dict
+        # # This prevents unit mismatch errors between Revenue, Debt, and Shares
+        #     current_revenue = info.get('totalRevenue', 1000000000) 
+        #     shares_out = info.get('sharesOutstanding', 1)
+        #     total_cash = info.get('totalCash', 0)
+        #     total_debt = info.get('totalDebt', 0)
+
+        #     excel_buffer = io.BytesIO()
+        #     wb.save(excel_buffer)
+        #     excel_buffer.seek(0)
+        #     return excel_buffer
 # ==========================================
         # PART 2: THE CUSTOM PRO TERMINAL (TIMEZONE & VOLUME FIXED)
         # ==========================================
@@ -693,13 +1059,16 @@ if query:
                     )
                     
                     st.plotly_chart(fig_tech, use_container_width=True)
+                    # Put this right above your charting code
+                    # This forces Streamlit to re-download the latest yfinance data
+                    st.button("🔄 Refresh Live Data")
 
                     # 6. The AI Confluence Matrix
                     latest_rsi = df_tech[rsi_col].iloc[-1]
                     latest_close = df_tech['Close'].iloc[-1]
                     latest_sma = df_tech[sma_col].iloc[-1]
                     
-                    st.markdown("### 🤖 Technical Matrix")
+                    st.markdown("### Technical Matrix")
                     col1, col2, col3 = st.columns(3)
                     with col1:
                         if latest_rsi > 70: st.error(f"**RSI ({latest_rsi:.1f}):** Overbought (Bearish)")
@@ -721,6 +1090,344 @@ if query:
             except Exception as e:
                 st.error(f"Engine logic error: {e}")
 
-# Put this right above your charting code
-if st.button("🔄 Refresh Live Data"):
-    st.rerun() # This forces Streamlit to re-download the latest yfinance data
+            # --- NEW: Educational Glossary & AI Conclusion ---
+            st.markdown("<br>", unsafe_allow_html=True) # Adds a little breathing room
+            st.markdown("#### 📚 Indicator Glossary & Ideal Market Conditions")
+            
+            with st.expander("Click to view technical definitions and ideal setups"):
+                st.markdown("""
+                * **MACD Histogram:** Measures the distance between the MACD line and its signal line, acting as an early warning system for momentum shifts. 
+                * *Ideal Setup:* A rising histogram while below the zero-line suggests a "bottom" is forming and buyers are stepping in.
+                * **RSI (14) - Relative Strength Index:** A momentum oscillator that measures the speed and change of price movements on a scale of 0 to 100.
+                * *Ideal Setup:* A reading below 30 indicates the asset is "Oversold" (potential buy), while above 70 indicates "Overbought" (potential sell).
+                * **20-Day EMA - Exponential Moving Average:** A short-term trend line that places a higher weight on recent price data, making it react faster to news.
+                * *Ideal Setup:* Used by day traders to ride momentum. As long as the price stays above this line, the short-term trend is firmly bullish.
+                * **50-Day SMA - Simple Moving Average:** The institutional standard for the medium-term trend. 
+                * *Ideal Setup:* When a faster moving average (like the 20 EMA) crosses *above* the 50 SMA, it creates a "Golden Cross", a highly sought-after bullish signal.
+                """)
+                     
+            #     # except Exception as e:
+            #     #     st.error(f"Could not generate Excel file: {e}")
+            # ==========================================
+# ==========================================
+        # PART 4: EXPORT & DOWNLOADS
+        # ==========================================
+        st.markdown("---")
+        st.markdown("### 📥 IN DEAPTH ANALYTICS")
+        st.write("Download the comprehensive multi-page narrative report or the raw Excel financial model.")
+
+        with st.spinner("Compiling Export Files..."):
+            try:
+                # --- 1. PDF GENERATOR ---
+                def generate_deep_pdf():
+                    sentiment_tag = "NEUTRAL" 
+                    if "BULLISH" in nlp_text: sentiment_tag = "BULLISH"
+                    elif "BEARISH" in nlp_text: sentiment_tag = "BEARISH"
+
+                    roe_val = info.get('returnOnEquity', 0) * 100
+                    try:
+                        raw_equity = bs['Stockholders Equity'].iloc[-1]
+                        safe_equity = 0 if pd.isna(raw_equity) else (raw_equity / 1e9)
+                    except: safe_equity = 0
+
+                    is_positive = ni.iloc[-1] > 0
+                    fcf_is_positive = fcf.iloc[-1] > 0
+
+                    health_status = "robust operational integrity" if is_positive else "significant operational challenges"
+                    sustainability_msg = "The gap between cash made and what is needed shows great long-term health." if is_positive else "The gap between cash coming in and rising bills shows serious risks for the business."
+                    management_msg = "management is putting cash into projects that grow the business." if is_positive else "management is struggling to keep the business profitable against high costs."
+                    final_action = "buy other companies or reward shareholders with extra dividends." if is_positive else "focus on cutting debt and saving cash to keep the business running."
+
+                    pdf = FPDF()
+                    pdf.add_page()
+                    pdf.set_font("Arial", 'B', 16)
+                    pdf.multi_cell(0, 10, f"FINANCIAL RESEARCH BREAKDOWN: {name.upper()}", align='C')
+                    
+                    pdf.set_font("Arial", 'I', 10)
+                    pdf.cell(0, 10, f"Market Price: {pdf_sym}{price:,.2f} | Consensus Target: {pdf_sym}{intrinsic_val:,.2f} | Base Currency: {currency_code}", ln=True, align='C')
+                    pdf.line(10, 32, 200, 32)
+                    pdf.ln(12)
+                    
+                    if isinstance(nlp_text, tuple): safe_nlp = clean_for_pdf(nlp_text[0])
+                    else: safe_nlp = clean_for_pdf(nlp_text)
+                    safe_consensus = clean_for_pdf(consensus_text)
+                    
+                    sentiment_interpretation = f"What does the sentiment mean? The NLP engine found a {sentiment_tag} mood in the news. This means the latest stories are highlighting growth chances or risks that aren't fully shown in the stock price yet."
+                    financial_interpretation = f"What does the financial health mean? With a ROE of {roe_val:.2f}%, {management_msg}"
+                    
+                    sections = {
+                        "1. Executive Summary & Intrinsic Valuation": f"This document provides a comprehensive financial breakdown of {name}. The asset is currently trading at a market price of {pdf_sym}{price:,.2f}. Based on alternative data and Wall Street consensus, the intrinsic target price is modeled at {pdf_sym}{intrinsic_val:,.2f}. Our analysis strips away standard accounting noise to focus on operational cash flow, capital structure, and true margin efficiency to determine the long-term viability of the underlying business model.",
+                        "2. AI Sentiment & NLP Insights": f"{safe_nlp}",
+                        "3. Consensus Forensic Breakdown": f"{safe_consensus}",
+                        "4. Top-Line Trajectory & Margin Efficiency": f"Growth metrics over the observed {slice_idx}-year period reveal that total revenue successfully scaled to {pdf_sym}{rev.iloc[-1]/1e9:.2f} Billion. This top-line growth is supported by a gross margin of {(gp.iloc[-1]/rev.iloc[-1])*100:.1f}%. By managing their office and daily costs, the firm secured an operating margin of {(op_inc.iloc[-1]/rev.iloc[-1])*100:.1f}%. After all taxes, the final profit margin left for shareholders is {(ni.iloc[-1]/rev.iloc[-1])*100:.1f}%.",
+                        "5. Earnings Quality Forensics": f"Real cash (Operating Cash Flow) is harder to fake than paper profits. This analysis shows {name} produced {pdf_sym}{ocf.iloc[-1]/1e9:.2f} Billion in actual cash. Since this cash amount is {'higher' if ocf.iloc[-1]>ni.iloc[-1] else 'lower'} than the reported profit of {pdf_sym}{ni.iloc[-1]/1e9:.2f} Billion, we can see how honest and strong their accounting really is.",
+                        "6. Capital Reinvestment (CapEx) & Free Cash Flow": f"To keep the business running and growing, the company spent {pdf_sym}{capex.iloc[-1]/1e9:.2f} Billion on equipment and upgrades. After paying for these, the leftover 'Free Cash Flow' is {pdf_sym}{fcf.iloc[-1]/1e9:.2f} Billion.",
+                        "7. Capital Structure, Liquidity & Default Risk": f"The balance sheet shows the company has {pdf_sym}{safe_equity:.2f} Billion in value for owners against debts of {pdf_sym}{info.get('totalDebt', 0)/1e9:.2f} Billion.",
+                        "8. M&A Strategic Velocity & Portfolio Impact": f"The company spends about {pdf_sym}{acquisitions.mean()/1e9:.2f}B a year buying other businesses. This M&A spending makes up {(acquisitions.sum()/total_investment.sum())*100:.1f}% of their total investment.",
+                        "9. Final Strategic Verdict": f"The multi-year data confirms that {name} shows {health_status}. {sustainability_msg} \n\n{sentiment_interpretation} \n\n{financial_interpretation} \n\nIn light of these metrics, management should {final_action} as a priority to secure the company's long-term future."
+                    }
+                    
+                    for title, text in sections.items():
+                        pdf.set_font("Arial", 'B', 12)
+                        pdf.cell(0, 10, title, ln=True)
+                        pdf.set_font("Arial", '', 11)
+                        pdf.multi_cell(0, 6, text.encode('latin-1', 'replace').decode('latin-1'))
+                        pdf.ln(8)
+                        
+                    return pdf.output(dest="S").encode("latin-1")
+
+                # --- 2. RAW FINANCIALS & CHARTS EXCEL GENERATOR ---
+                def generate_raw_excel():
+                    output = io.BytesIO()
+                    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                        df_formatted = pd.DataFrame({
+                            'Revenue': rev.apply(lambda x: fin_sym + format_kmb(x).replace('$', '')),
+                            'Net Income': ni.apply(lambda x: fin_sym + format_kmb(x).replace('$', '')),
+                            'Operating Cash Flow': ocf.apply(lambda x: fin_sym + format_kmb(x).replace('$', '')),
+                            'CapEx': capex.apply(lambda x: fin_sym + format_kmb(x).replace('$', '')),
+                            'Free Cash Flow (UFCF)': fcf.apply(lambda x: fin_sym + format_kmb(x).replace('$', '')),
+                            'Total Equity': equity.apply(lambda x: fin_sym + format_kmb(x).replace('$', '')),
+                            'Total Debt': debt.apply(lambda x: fin_sym + format_kmb(x).replace('$', ''))
+                        })
+                        
+                        df_raw = pd.DataFrame({
+                            'Revenue': rev/1e9, 
+                            'Gross Profit': gp/1e9,
+                            'Net Income': ni/1e9,
+                            'Op Cash Flow': ocf/1e9,
+                            'CapEx': capex/1e9,
+                            'Free Cash Flow': fcf/1e9,
+                            'Total Equity': equity/1e9,
+                            'Total Debt': debt/1e9
+                        })
+                        
+                        df_formatted.to_excel(writer, sheet_name='Financial Model')
+                        df_raw.to_excel(writer, sheet_name='Chart Data')
+                        
+                        workbook = writer.book
+                        worksheet = writer.sheets['Financial Model']
+                        max_row = len(years) + 1
+
+                        chart1 = workbook.add_chart({'type': 'column'})
+                        chart1.add_series({'name': "='Chart Data'!$B$1", 'categories': f"='Chart Data'!$A$2:$A${max_row}", 'values': f"='Chart Data'!$B$2:$B${max_row}", 'fill': {'color': '#3b82f6'}})
+                        chart1.add_series({'name': "='Chart Data'!$D$1", 'categories': f"='Chart Data'!$A$2:$A${max_row}", 'values': f"='Chart Data'!$D$2:$D${max_row}", 'fill': {'color': '#10b981'}})
+                        chart1.set_title({'name': f'Revenue vs Net Income ({fin_sym} Billions)'})
+                        worksheet.insert_chart('J2', chart1)
+
+                        chart2 = workbook.add_chart({'type': 'column'})
+                        chart2.add_series({'name': "='Chart Data'!$E$1", 'categories': f"='Chart Data'!$A$2:$A${max_row}", 'values': f"='Chart Data'!$E$2:$E${max_row}", 'fill': {'color': '#14b8a6'}})
+                        chart2.add_series({'name': "='Chart Data'!$F$1", 'categories': f"='Chart Data'!$A$2:$A${max_row}", 'values': f"='Chart Data'!$F$2:$F${max_row}", 'fill': {'color': '#ef4444'}})
+                        chart2.add_series({'name': "='Chart Data'!$G$1", 'categories': f"='Chart Data'!$A$2:$A${max_row}", 'values': f"='Chart Data'!$G$2:$G${max_row}", 'type': 'line', 'line': {'color': '#10b981', 'width': 3}})
+                        chart2.set_title({'name': f'Cash Flow Engine ({fin_sym} Billions)'})
+                        worksheet.insert_chart('J17', chart2)
+
+                        chart3 = workbook.add_chart({'type': 'column'})
+                        chart3.add_series({'name': "='Chart Data'!$H$1", 'categories': f"='Chart Data'!$A$2:$A${max_row}", 'values': f"='Chart Data'!$H$2:$H${max_row}", 'fill': {'color': '#10b981'}})
+                        chart3.add_series({'name': "='Chart Data'!$I$1", 'categories': f"='Chart Data'!$A$2:$A${max_row}", 'values': f"='Chart Data'!$I$2:$I${max_row}", 'fill': {'color': '#ef4444'}})
+                        chart3.set_title({'name': f'Capital Structure ({fin_sym} Billions)'})
+                        worksheet.insert_chart('R2', chart3)
+
+                        chart4 = workbook.add_chart({'type': 'column'})
+                        chart4.add_series({'name': "='Chart Data'!$B$1", 'categories': f"='Chart Data'!$A$2:$A${max_row}", 'values': f"='Chart Data'!$B$2:$B${max_row}", 'fill': {'color': '#3b82f6'}})
+                        chart4.add_series({'name': "='Chart Data'!$C$1", 'categories': f"='Chart Data'!$A$2:$A${max_row}", 'values': f"='Chart Data'!$C$2:$C${max_row}", 'fill': {'color': '#f59e0b'}})
+                        chart4.set_title({'name': f'Revenue vs Gross Profit ({fin_sym} Billions)'})
+                        worksheet.insert_chart('R17', chart4)
+                        
+                        df_def = pd.DataFrame({
+                            'Metric': ['Revenue', 'CapEx', 'Free Cash Flow (UFCF)', 'Current Ratio', 'Debt-to-Equity'],
+                            'Analyst Definition': [
+                                'Total top-line sales generated by the core business.',
+                                'Capital Expenditures: Money spent on buying or upgrading physical assets.',
+                                'Unlevered Free Cash Flow: Pure cash left over after expenses and CapEx.',
+                                'Short-term liquidity. Current Assets divided by Current Liabilities.',
+                                'Total Debt divided by Shareholder Equity. Measures long-term risk.'
+                            ]
+                        })
+                        df_def.to_excel(writer, sheet_name='Metric Guide', index=False)
+                        
+                    return output.getvalue()
+
+                # --- 3. DCF VARIABLES SETUP ---
+                ticker_obj = yf.Ticker(ticker) 
+                info = ticker_obj.info
+                financials = ticker_obj.financials
+                balance_sheet = ticker_obj.balance_sheet
+                current_symbol = info.get('symbol', ticker).upper()
+                
+                def hunt_for_metric(df, aliases):
+                    if df is not None and not df.empty:
+                        for alias in aliases:
+                            if alias in df.index:
+                                val = df.loc[alias].iloc[0]
+                                if pd.notna(val) and val != 0: return val
+                    return None
+
+                rev_aliases = ['Total Revenue', 'Operating Revenue', 'Revenue', 'Net Sales', 'Sales/Revenue', 'Total Operating IncomeAsReported']
+                current_revenue = hunt_for_metric(financials, rev_aliases)
+                if not current_revenue: current_revenue = info.get('totalRevenue', 1000000000)
+
+                debt_aliases = ['Total Debt', 'Long Term Debt', 'Short Long Term Debt', 'Net Debt', 'Long Term Debt And Capital Lease Obligation']
+                total_debt = hunt_for_metric(balance_sheet, debt_aliases)
+                if not total_debt: total_debt = info.get('totalDebt', 0)
+
+                cash_aliases = ['Cash And Cash Equivalents', 'Cash Cash Equivalents And Short Term Investments', 'Total Cash']
+                total_cash = hunt_for_metric(balance_sheet, cash_aliases)
+                if not total_cash: total_cash = info.get('totalCash', 0)
+
+                shares_out = info.get('sharesOutstanding')
+                if not shares_out or pd.isna(shares_out) or shares_out == 0: shares_out = info.get('impliedSharesOutstanding', 1000000)
+
+                actual_margin = info.get('operatingMargins')
+                if not actual_margin or pd.isna(actual_margin): actual_margin = 0.08
+                
+                actual_growth = info.get('revenueGrowth')
+                if not actual_growth or pd.isna(actual_growth): actual_growth = 0.05
+
+                stock_currency = info.get('currency', 'USD')
+                financial_currency = info.get('financialCurrency', 'USD')
+                
+                live_fx_rate = 1.0
+                if stock_currency == "INR" and financial_currency == "USD":
+                    try:
+                        fx_info = yf.Ticker("USDINR=X").info
+                        live_fx_rate = fx_info.get('regularMarketPrice') or fx_info.get('previousClose') or 83.5
+                    except Exception: live_fx_rate = 83.5
+
+                if not current_revenue or pd.isna(current_revenue) or current_revenue == 0: current_revenue = 1000000000 
+                if not total_debt or pd.isna(total_debt): total_debt = 0
+                if not total_cash or pd.isna(total_cash): total_cash = 0
+
+                # --- 4. COMPILE DCF EXCEL ---
+                excel_dcf_data = generate_dcf_excel(
+                    ticker_symbol=current_symbol, 
+                    base_revenue=current_revenue, 
+                    shares_out=shares_out, 
+                    total_cash=total_cash, 
+                    total_debt=total_debt,
+                    actual_margin=actual_margin,
+                    actual_growth=actual_growth,
+                    stock_currency=stock_currency,       
+                    financial_currency=financial_currency, 
+                    live_fx_rate=live_fx_rate            
+                )
+                # ==========================================
+                # 5. RENDER THE 3 DOWNLOAD BUTTONS (NO-RELOAD HTML BYPASS)
+                # ==========================================
+                st.markdown("<br>", unsafe_allow_html=True)
+                c_exp1, c_exp2, c_exp3 = st.columns(3)
+                
+                # 1. PDF Generator
+                pdf_data = generate_deep_pdf()
+                b64_pdf = base64.b64encode(pdf_data).decode()
+                href_pdf = f'<a href="data:application/pdf;base64,{b64_pdf}" download="{ticker}_Research.pdf" style="display: block; text-align: center; padding: 0.5em; background-color: #1e293b; color: white; text-decoration: none; border-radius: 5px; border: 1px solid #334155; font-family: sans-serif;">📄 Download PDF Narrative Report</a>'
+                c_exp1.markdown(href_pdf, unsafe_allow_html=True)
+
+                # 2. DCF Model Generator
+                b64_dcf = base64.b64encode(excel_dcf_data.getvalue()).decode()
+                href_dcf = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64_dcf}" download="{current_symbol}_Automated_DCF.xlsx" style="display: block; text-align: center; padding: 0.5em; background-color: #1e293b; color: white; text-decoration: none; border-radius: 5px; border: 1px solid #334155; font-family: sans-serif;">📊 Download Proprietary DCF Model</a>'
+                c_exp2.markdown(href_dcf, unsafe_allow_html=True)
+
+                # 3. Raw Financials Generator
+                raw_excel_data = generate_raw_excel()
+                b64_raw = base64.b64encode(raw_excel_data).decode()
+                href_raw = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64_raw}" download="{ticker}_Data_Dump.xlsx" style="display: block; text-align: center; padding: 0.5em; background-color: #1e293b; color: white; text-decoration: none; border-radius: 5px; border: 1px solid #334155; font-family: sans-serif;">📈 Download Raw Financials & Charts</a>'
+                c_exp3.markdown(href_raw, unsafe_allow_html=True)
+            except Exception as e:
+                st.error(f"Could not generate export files: {e}")
+                
+            # ==========================================
+            # PART 3: THE MACHINE LEARNING PREDICTOR
+            # ==========================================
+            st.markdown("---")
+            st.markdown("### Trend Prediction based on ML")
+
+            # 1. Create a safe, permanent box for our loading message
+            loading_box = st.empty()
+            loading_box.info("⏳ Training Random Forest model in the background. Please wait...")
+
+            # 2. Set up variables
+            prediction, confidence, accuracy, ml_error = None, None, None, None
+
+            # 3. The Brain: Heavy math (ABSOLUTELY NO UI COMMANDS IN HERE)
+            try:
+                from sklearn.ensemble import RandomForestClassifier
+                import numpy as np
+
+                df_ml = df_tech.copy()
+                df_ml['Target'] = np.where(df_ml['Close'].shift(-1) > df_ml['Close'], 1, 0)
+                
+                # Make sure these variables match what you named them in your technical indicators!
+                features = [sma_col, ema_col, rsi_col, macd_line, macd_hist] 
+                df_ml = df_ml.dropna()
+
+                X = df_ml[features]
+                y = df_ml['Target']
+
+                X_train = X.iloc[:-1]
+                y_train = y.iloc[:-1]
+                X_live = X.iloc[[-1]]
+
+                rf_model = RandomForestClassifier(n_estimators=100, random_state=42, max_depth=5)
+                rf_model.fit(X_train, y_train)
+
+                prediction = rf_model.predict(X_live)[0]
+                confidence = rf_model.predict_proba(X_live)[0].max() * 100
+                accuracy = rf_model.score(X_train, y_train) * 100
+
+            except Exception as e:
+                ml_error = e
+
+            # 4. Delete the loading message safely
+            loading_box.empty()
+
+            # 5. The Face: Draw the results and Explainable AI Chart
+            if ml_error:
+                st.warning(f"ML Engine requires more historical data to train safely. (Error: {ml_error})")
+            elif prediction is not None:
+                ml1, ml2, ml3 = st.columns(3)
+                
+                if prediction == 1:
+                    ml1.success(f"**Forecast:** BULLISH (Upward)")
+                else:
+                    ml1.error(f"**Forecast:** BEARISH (Downward)")
+                    
+                ml2.metric("AI Confidence Level", f"{confidence:.1f}%")
+                ml3.metric("Model Backtest Accuracy", f"{accuracy:.1f}%")
+                
+                # --- NEW: Explainable AI (Feature Importance Chart) ---
+                st.markdown("#### 🔍 What is driving this prediction?")
+                import plotly.express as px
+                import pandas as pd
+                
+                # Extract the AI's internal weighting
+                importances = rf_model.feature_importances_
+                # Clean names for the chart
+                feature_names = ['50-Day SMA', '20-Day EMA', 'RSI (14)', 'MACD Line', 'MACD Histogram']
+                
+                importance_df = pd.DataFrame({
+                    'Indicator': feature_names,
+                    'Importance': importances
+                }).sort_values(by='Importance', ascending=True)
+                
+                # Draw the Plotly Bar Chart
+                fig_importance = px.bar(
+                    importance_df, 
+                    x='Importance', 
+                    y='Indicator', 
+                    orientation='h',
+                    color='Importance',
+                    color_continuous_scale='Blues'
+                )
+                
+                fig_importance.update_layout(
+                    margin=dict(l=20, r=20, t=20, b=20),
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    coloraxis_showscale=False,
+                    height=250
+                )
+                
+                st.plotly_chart(fig_importance, use_container_width=True)
+
+
+
