@@ -1114,7 +1114,7 @@ if query:
         # ==========================================
         st.markdown("---")
         st.markdown("### 📥 IN DEAPTH ANALYTICS")
-        st.write("Download the comprehensive multi-page narrative report or the raw Excel financial model.")
+        st.write("Download the comprehensive multi-page narrative report , The DCF Mdel and raw Excel financial model.")
 
         with st.spinner("Compiling Export Files..."):
             try:
@@ -1319,7 +1319,7 @@ if query:
                 # 1. PDF Generator
                 pdf_data = generate_deep_pdf()
                 b64_pdf = base64.b64encode(pdf_data).decode()
-                href_pdf = f'<a href="data:application/pdf;base64,{b64_pdf}" download="{ticker}_Research.pdf" style="display: block; text-align: center; padding: 0.5em; background-color: #1e293b; color: white; text-decoration: none; border-radius: 5px; border: 1px solid #334155; font-family: sans-serif;">📄 Download PDF Narrative Report</a>'
+                href_pdf = f'<a href="data:application/pdf;base64,{b64_pdf}" download="{ticker}_Research.pdf" style="display: block; text-align: center; padding: 0.5em; background-color: #1e293b; color: white; text-decoration: none; border-radius: 5px; border: 1px solid #334155; font-family: sans-serif;">📄 Download in deapth report</a>'
                 c_exp1.markdown(href_pdf, unsafe_allow_html=True)
 
                 # 2. DCF Model Generator
